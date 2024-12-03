@@ -1,0 +1,70 @@
+def check_least_privilege_and_group_policies(client):
+    """
+    Checks if all users have least privilege access and belong to a group with policies.
+
+    Returns:
+        dict: A summary of the findings.
+    """
+    print("----- Checking Least Privilege and Group Policies -----")
+    try:
+        # Initialize IAM client
+        iam_client = client
+        least_privilege = True  # Flag to track if all users have least privilege
+        all_users_in_groups = True
+        all_groups_have_policies = True
+
+        # Check attached policies for each user
+        users = iam_client.list_users()['Users']
+        for user in users:
+            user_name = user['UserName']
+            
+            # Check if the user belongs to at least one group
+            user_groups = iam_client.list_groups_for_user(UserName=user_name)['Groups']
+            if not user_groups:
+                all_users_in_groups = False
+
+            # List managed policies attached to the user
+            attached_policies = iam_client.list_attached_user_policies(UserName=user_name)['AttachedPolicies']
+            for policy in attached_policies:
+                policy_arn = policy['PolicyArn']
+                policy_document = iam_client.get_policy(PolicyArn=policy_arn)['Policy']
+                policy_version = iam_client.get_policy_version(
+                    PolicyArn=policy_arn, 
+                    VersionId=policy_document['DefaultVersionId']
+                )['PolicyVersion']
+                
+                # Check if the policy contains any wildcard permissions
+                if "*" in policy_version['Document']['Statement'][0]['Action']:
+                    least_privilege = False
+                    break
+            
+            # List inline policies for the user
+            inline_policies = iam_client.list_user_policies(UserName=user_name)['PolicyNames']
+            for inline_policy in inline_policies:
+                policy_document = iam_client.get_user_policy(UserName=user_name, PolicyName=inline_policy)['PolicyDocument']
+                
+                # Check for wildcard actions in inline policy
+                if "*" in policy_document['Statement'][0]['Action']:
+                    least_privilege = False
+                    break
+        
+        # Check if all groups have at least one policy
+        groups = iam_client.list_groups()['Groups']
+        for group in groups:
+            group_name = group['GroupName']
+            attached_policies = iam_client.list_attached_group_policies(GroupName=group_name)['AttachedPolicies']
+            inline_policies = iam_client.list_group_policies(GroupName=group_name)['PolicyNames']
+            if not attached_policies and not inline_policies:
+                all_groups_have_policies = False
+        
+        # Prepare the result as a dictionary
+        result = {
+            "least_privilege": least_privilege,
+            "all_users_in_groups": all_users_in_groups,
+            "all_groups_have_policies": all_groups_have_policies,
+        }
+
+        return result
+
+    except Exception as e:
+        return {"error": str(e)}
